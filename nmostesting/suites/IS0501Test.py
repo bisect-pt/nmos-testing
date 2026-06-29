@@ -115,6 +115,19 @@ class IS0501Test(GenericTest):
     def _compatible_resources(self, resources, excluded_transports=frozenset({MXL_TRANSPORT, USB_TRANSPORT})):
         return [rid for rid in resources
                 if self.transport_types.get(rid) not in excluded_transports]
+
+    def save_subresources(self, path, response):
+            super().save_subresources(path, response)
+            # Keep USB resources out of the auto (schema) tests — not a valid v1.1 transport.
+            # set_up_tests() populated self.transport_types before basics() runs.
+            if path.rstrip("/").endswith(("single/senders", "single/receivers")):
+                ids = self.saved_entities.get(path)
+                if ids:
+                    self.saved_entities[path] = [
+                        rid for rid in ids
+                        if self.transport_types.get(rid) != "urn:x-nmos:transport:usb"
+                    ]
+
     def test_01(self, test):
         """API root matches the spec"""
 
