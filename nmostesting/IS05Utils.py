@@ -41,6 +41,7 @@ class IS05Utils(NMOSUtils):
         if self.compare_api_version(api_version, "v1.1") >= 0 and include_transports_without_transport_file:
             valid_transports.append("urn:x-nmos:transport:websocket")
             valid_transports.append("urn:x-nmos:transport:mqtt")
+            valid_transports.append("urn:x-nmos:transport:usb")
         if self.compare_api_version(api_version, "v1.2") >= 0 and include_transports_without_transport_file:
             valid_transports.append("urn:x-nmos:transport:mxl")
         return valid_transports
@@ -309,6 +310,8 @@ class IS05Utils(NMOSUtils):
             return self.generate_broker_topics(port, portId)
         elif transportType == "urn:x-nmos:transport:mxl":
             return self.generate_mxl_flow_ids(port, portId)
+        elif transportType == "urn:x-nmos:transport:usb":
+            return self.generate_usb_source_ports(port, portId)
         else:
             return self.generate_destination_ports(port, portId)
 
@@ -320,6 +323,8 @@ class IS05Utils(NMOSUtils):
             return "broker_topic"
         elif transportType == "urn:x-nmos:transport:mxl":
             return "mxl_flow_id"
+        elif transportType == "urn:x-nmos:transport:usb":
+            return "source_port"
         else:
             return "destination_port"
 
@@ -342,6 +347,36 @@ class IS05Utils(NMOSUtils):
                             min = 5000
                         if "maximum" in entry['destination_port']:
                             max = entry['destination_port']['maximum']
+                        else:
+                            max = 49151
+                        toReturn.append(randint(min, max))
+                return True, toReturn
+            except (TypeError, ValueError):
+                return False, "Invalid response from {}, got: {}".format(url, constraints)
+            except KeyError as e:
+                return False, "Expected key '{}' not found in response from {}".format(str(e), url)
+        else:
+            return False, constraints
+        
+    def generate_usb_source_ports(self, port, portId):
+        """Uses a port's constraints to generate an allowable source
+        ports for it"""
+        url = "single/" + port + "s/" + portId + "/constraints/"
+        valid, constraints = self.checkCleanRequestJSON("GET", url)
+        if valid:
+            toReturn = []
+            try:
+                for entry in constraints:
+                    if "enum" in entry['source_port']:
+                        values = entry['source_port']['enum']
+                        toReturn.append(values[randint(0, len(values) - 1)])
+                    else:
+                        if "minimum" in entry['source_port']:
+                            min = entry['source_port']['minimum']
+                        else:
+                            min = 5000
+                        if "maximum" in entry['source_port']:
+                            max = entry['source_port']['maximum']
                         else:
                             max = 49151
                         toReturn.append(randint(min, max))

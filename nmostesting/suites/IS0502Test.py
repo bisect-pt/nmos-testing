@@ -34,6 +34,25 @@ class IS0502Test(GenericTest):
     """
     Runs Tests covering both IS-04 and IS-05
     """
+    
+    def set_up_tests(self):
+        # Populate IS-05 transport types before the auto crawl (basics()) runs,
+        # so save_subresources can filter USB. Idempotent via the _requested guard.
+        self.get_is05_resources("senders")
+        self.get_is05_resources("receivers")
+
+    def save_subresources(self, path, response):
+        super().save_subresources(path, response)
+        # Keep USB resources out of the connection-API auto (schema) tests.
+        # Node-API collections (/senders, /receivers) lack the 'single/' prefix and are untouched.
+        if path.rstrip("/").endswith(("single/senders", "single/receivers")):
+            ids = self.saved_entities.get(path)
+            if ids:
+                self.saved_entities[path] = [
+                    rid for rid in ids
+                    if self.is05_resources["transport_types"].get(rid) != "urn:x-nmos:transport:usb"
+                ]
+    
     def __init__(self, apis, **kwargs):
         # Don't auto-test /transportfile as it is permitted to generate a 404 when master_enable is false
         omit_paths = [

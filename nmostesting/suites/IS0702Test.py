@@ -100,6 +100,23 @@ class IS0702Test(GenericTest):
         if len(self.is05_senders) > 0:
             for sender in self.is05_senders:
                 self.update_active_sender(sender)
+        
+        for receiver in self.is05_utils.get_receivers():
+            if self.is05_utils.compare_api_version(self.apis[CONN_API_KEY]["version"], "v1.1") >= 0:
+                self.transport_types[receiver] = self.is05_utils.get_transporttype(receiver, "receiver")
+            else:
+                self.transport_types[receiver] = "urn:x-nmos:transport:rtp"
+
+    def save_subresources(self, path, response):
+        super().save_subresources(path, response)
+        # Keep USB resources out of the connection-API auto (schema) tests.
+        if path.rstrip("/").endswith(("single/senders", "single/receivers")):
+            ids = self.saved_entities.get(path)
+            if ids:
+                self.saved_entities[path] = [
+                    rid for rid in ids
+                    if self.transport_types.get(rid) != "urn:x-nmos:transport:usb"
+                ]
 
     def test_01(self, test):
         """Each IS-05 Sender has the required ext parameters"""

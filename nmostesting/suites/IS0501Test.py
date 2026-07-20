@@ -29,36 +29,28 @@ from ..TestHelper import load_resolved_schema, check_content_type
 CONN_API_KEY = "connection"
 
 
-def _is_mxl_transport(transport_type):
-    """Check for MXL transport type."""
-    return transport_type == "urn:x-nmos:transport:mxl"
+MXL_TRANSPORT = "urn:x-nmos:transport:mxl"
+USB_TRANSPORT = "urn:x-nmos:transport:usb"
 
+DEFAULT_EXCLUDED_TRANSPORTS = frozenset({MXL_TRANSPORT})
 
-def _assert_compatible_resources(test_suite, test, resources):
-    """Abort when no resources exist, or when only MXL transports are present."""
-    if len(resources) == 0:
-        raise NMOSTestException(test.UNCLEAR("Not tested. No resources found."))
-    compatible_resources = test_suite._compatible_resources(resources)
-    if len(compatible_resources) == 0:
-        raise NMOSTestException(test.UNCLEAR(
-            "Not tested. MXL senders/receivers are covered by the BCP-007-03-01 test suite."
-        ))
-
-
-def requires_compatible_resources(resource_attr):
-    """Declare that a test requires RTP/MQTT/WebSocket transport parameter resources to run."""
-
+def requires_compatible_resources(resource_attr,
+                                  excluded_transports=DEFAULT_EXCLUDED_TRANSPORTS):
     def decorator(test_method):
         @functools.wraps(test_method)
         def wrapper(self, test):
             resources = getattr(self, resource_attr)
-            _assert_compatible_resources(self, test, resources)
+            if len(resources) == 0:
+                raise NMOSTestException(test.UNCLEAR("Not tested. No resources found."))
+            compatible = [rid for rid in resources
+                          if self.transport_types.get(rid) not in excluded_transports]
+            if len(compatible) == 0:
+                raise NMOSTestException(test.UNCLEAR(
+                    "Not tested. Available senders/receivers use transports "
+                    "covered by another test suite."))
             return test_method(self, test)
-
         return wrapper
-
     return decorator
-
 
 def requires_resources(resource_attr):
     """Declare that a test requires at least one sender or receiver to exist."""
@@ -120,9 +112,21 @@ class IS0501Test(GenericTest):
             else:
                 self.transport_types[receiver] = "urn:x-nmos:transport:rtp"
 
-    def _compatible_resources(self, resources):
-        return [resource_id for resource_id in resources
-                if not _is_mxl_transport(self.transport_types.get(resource_id))]
+    def _compatible_resources(self, resources, excluded_transports=frozenset({MXL_TRANSPORT, USB_TRANSPORT})):
+        return [rid for rid in resources
+                if self.transport_types.get(rid) not in excluded_transports]
+
+    def save_subresources(self, path, response):
+            super().save_subresources(path, response)
+            # Keep USB resources out of the auto (schema) tests — not a valid v1.1 transport.
+            # set_up_tests() populated self.transport_types before basics() runs.
+            if path.rstrip("/").endswith(("single/senders", "single/receivers")):
+                ids = self.saved_entities.get(path)
+                if ids:
+                    self.saved_entities[path] = [
+                        rid for rid in ids
+                        if self.transport_types.get(rid) != "urn:x-nmos:transport:usb"
+                    ]
 
     def test_01(self, test):
         """API root matches the spec"""
@@ -175,7 +179,8 @@ class IS0501Test(GenericTest):
             return test.UNCLEAR(response)
         return test.FAIL(response)
 
-    @requires_compatible_resources("senders")
+    @requires_compatible_resources("senders",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_09_01(self, test):
         """All params listed in /single/senders/{senderId}/active/ match their corresponding SDP files"""
 
@@ -206,7 +211,8 @@ class IS0501Test(GenericTest):
             return test.UNCLEAR(response)
         return test.FAIL(response)
 
-    @requires_compatible_resources("senders")
+    @requires_compatible_resources("senders",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_11(self, test):
         """Senders are using valid combination of parameters"""
 
@@ -272,7 +278,8 @@ class IS0501Test(GenericTest):
                 return test.FAIL(response)
         return test.PASS()
 
-    @requires_compatible_resources("senders")
+    @requires_compatible_resources("senders",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_11_02(self, test):
         """Patched 'auto' values are translated on '/active' endpoint for all senders"""
         rtpGeneralAutoParams = [
@@ -307,7 +314,8 @@ class IS0501Test(GenericTest):
         autoParams = rtpAutoParams + websocketAutoParams + mqttAutoParams
         return self.patch_auto_params(test, self._compatible_resources(self.senders), "senders", autoParams)
 
-    @requires_compatible_resources("receivers")
+    @requires_compatible_resources("receivers",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_12(self, test):
         """Receivers are using valid combination of parameters"""
 
@@ -377,7 +385,8 @@ class IS0501Test(GenericTest):
                 return test.FAIL(response)
         return test.PASS()
 
-    @requires_compatible_resources("receivers")
+    @requires_compatible_resources("receivers",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_12_02(self, test):
         """Patched 'auto' values are translated on '/active' endpoint for all receivers"""
         rtpGeneralAutoParams = [
@@ -425,12 +434,12 @@ class IS0501Test(GenericTest):
             return test.WARNING(warn)
         return test.PASS()
 
-    @requires_resources("receivers")
+    @requires_compatible_resources("receivers", excluded_transports={USB_TRANSPORT})
     def test_14(self, test):
         """Return of /single/receivers/{receiverId}/staged/ meets the schema"""
 
         warn = ""
-        for receiver in self.receivers:
+        for receiver in self._compatible_resources(self.receivers, excluded_transports={USB_TRANSPORT}):
             dest = "single/receivers/" + receiver + "/staged/"
             schema = self.get_schema(CONN_API_KEY, "GET", "/single/receivers/{receiverId}/staged", 200)
             valid, msg = self.compare_to_schema(schema, dest)
@@ -443,7 +452,8 @@ class IS0501Test(GenericTest):
             return test.WARNING(warn)
         return test.PASS()
 
-    @requires_compatible_resources("senders")
+    @requires_compatible_resources("senders",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_15(self, test):
         """Staged parameters for senders comply with constraints"""
 
@@ -454,7 +464,8 @@ class IS0501Test(GenericTest):
         else:
             return test.FAIL(response)
 
-    @requires_compatible_resources("receivers")
+    @requires_compatible_resources("receivers",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_16(self, test):
         """Staged parameters for receivers comply with constraints"""
 
@@ -474,11 +485,12 @@ class IS0501Test(GenericTest):
             return test.PASS()
         return test.FAIL(response)
 
-    @requires_resources("receivers")
+    @requires_compatible_resources("receivers",
+                               excluded_transports={USB_TRANSPORT})
     def test_18(self, test):
         """Receiver patch response meets the schema"""
 
-        valid, response = self.check_patch_response_valid("receiver", self.receivers)
+        valid, response = self.check_patch_response_valid("receiver", self._compatible_resources(self.receivers, excluded_transports={USB_TRANSPORT}))
         if valid:
             return test.PASS()
         return test.FAIL(response)
@@ -757,12 +769,13 @@ class IS0501Test(GenericTest):
             return test.WARNING(warn)
         return test.PASS()
 
-    @requires_resources("receivers")
+    @requires_compatible_resources("receivers",
+                               excluded_transports={USB_TRANSPORT})
     def test_32(self, test):
         """Return of /single/receivers/{receiverId}/active/ meets the schema"""
 
         warn = ""
-        for receiver in self.receivers:
+        for receiver in self._compatible_resources(self.receivers, excluded_transports={USB_TRANSPORT}):
             activeUrl = "single/receivers/" + receiver + "/active"
             schema = self.get_schema(CONN_API_KEY, "GET", "/single/receivers/{receiverId}/active", 200)
             valid, msg = self.compare_to_schema(schema, activeUrl)
@@ -886,7 +899,8 @@ class IS0501Test(GenericTest):
                                  .format(receiver, self.transport_types[receiver]))
         return test.PASS()
 
-    @requires_compatible_resources("senders")
+    @requires_compatible_resources("senders",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_41(self, test):
         """SDP transport files pass SDPoker tests"""
 
@@ -996,7 +1010,8 @@ class IS0501Test(GenericTest):
 
         return test.PASS()
 
-    @requires_compatible_resources("senders")
+    @requires_compatible_resources("senders",
+                               excluded_transports={MXL_TRANSPORT, USB_TRANSPORT})
     def test_42(self, test):
         """Transport files use the expected Content-Type"""
 
@@ -1125,7 +1140,7 @@ class IS0501Test(GenericTest):
         """Check that the staged endpoint is using parameters that meet
         the contents of the /constraints endpoint"""
         for myPort in portList:
-            if _is_mxl_transport(self.transport_types.get(myPort)):
+            if self.transport_types.get(myPort) in {MXL_TRANSPORT, USB_TRANSPORT}:
                 continue
             dest = "single/" + port + "s/" + myPort + "/staged/"
             valid, response = self.is05_utils.checkCleanRequestJSON("GET", dest)
